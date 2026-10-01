@@ -23,6 +23,22 @@
             version = cargoToml.package.version;
             src = ./.;
             cargoLock.lockFile = ./Cargo.lock;
+
+            nativeBuildInputs = [
+              pkgs.pkg-config
+            ];
+
+            buildInputs = [
+              pkgs.gtk3
+            ];
+
+            postInstall = ''
+              mkdir -p $out/lib
+              $CC -shared -fPIC -O2 -Wall -Wextra \
+                -o $out/lib/libthunar-current.so \
+                ./thunar/thunar-current.c \
+                $(pkg-config --cflags --libs gtk+-3.0)
+            '';
           };
         }
       );

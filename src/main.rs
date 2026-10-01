@@ -173,18 +173,24 @@ async fn run_client(command: &str) -> Result<(), Box<dyn std::error::Error>> {
             if let Some(att) = context.attention {
                 if let Some(sel) = att.selections.first() {
                     println!("{}:{}:{}", att.file, sel.line, sel.column);
-                    return Ok(());
+                } else {
+                    println!("{}", att.file);
                 }
+                return Ok(());
             }
             std::process::exit(1);
         }
         "location" => {
             if let Some(att) = context.attention {
-                if let Some(path) = Path::new(&att.file).parent() {
-                    if let Some(path_str) = path.to_str() {
-                        println!("{}", path_str);
-                        return Ok(());
-                    }
+                let p = Path::new(&att.file);
+                let loc = if p.is_dir() {
+                    Some(p)
+                } else {
+                    p.parent()
+                };
+                if let Some(path_str) = loc.and_then(|p| p.to_str()) {
+                    println!("{}", path_str);
+                    return Ok(());
                 }
             }
             println!("{}", home_dir);

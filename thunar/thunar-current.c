@@ -12,11 +12,6 @@
 typedef void (*orig_gtk_window_set_title_f)(GtkWindow *window, const gchar *title);
 static orig_gtk_window_set_title_f orig_gtk_window_set_title = NULL;
 
-__attribute__((constructor))
-static void init(void) {
-    unsetenv("LD_PRELOAD");
-}
-
 static char *json_escape(const char *s) {
     GString *out = g_string_new("\"");
     for (; *s; s++) {
@@ -133,6 +128,7 @@ void gtk_window_set_title(GtkWindow *window, const gchar *title) {
     if (window && GTK_IS_WINDOW(window)) {
         GType thunar_win_type = g_type_from_name("ThunarWindow");
         if (thunar_win_type && g_type_is_a(G_OBJECT_TYPE(window), thunar_win_type)) {
+            unsetenv("LD_PRELOAD");
             if (!g_object_get_data(G_OBJECT(window), "current_hook_connected")) {
                 g_object_set_data(G_OBJECT(window), "current_hook_connected", GINT_TO_POINTER(1));
                 g_signal_connect(window, "notify::current-directory", G_CALLBACK(on_notify_dir), NULL);

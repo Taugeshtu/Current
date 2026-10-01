@@ -12,6 +12,11 @@
 typedef void (*orig_gtk_window_set_title_f)(GtkWindow *window, const gchar *title);
 static orig_gtk_window_set_title_f orig_gtk_window_set_title = NULL;
 
+__attribute__((constructor))
+static void init(void) {
+    unsetenv("LD_PRELOAD");
+}
+
 static char *json_escape(const char *s) {
     GString *out = g_string_new("\"");
     for (; *s; s++) {

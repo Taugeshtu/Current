@@ -1,3 +1,5 @@
+mod focus;
+
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
@@ -23,7 +25,9 @@ struct Attention {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 struct Context {
     app_id: Option<String>,
+    title: Option<String>,
     pid: Option<u32>,
+    window_id: Option<u64>,
     attention: Option<Attention>,
 }
 
@@ -31,69 +35,19 @@ struct Context {
 #[serde(tag = "type")]
 enum Request {
     Publish {
-        pid: u32,
+        #[serde(default)]
+        pid: Option<u32>,
         attention: Attention,
     },
     Query,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-struct NiriWindow {
-    pid: Option<u32>,
-    app_id: Option<String>,
-    title: Option<String>,
-}
+type Cache = Arc<Mutex<HashMap<u64, Attention>>>;
 
-type Cache = Arc<Mutex<HashMap<u32, Attention>>>;
-
-fn find_niri_socket() -> Option<std::path::PathBuf> {
-    let runtime_dir = std::env::var("XDG_RUNTIME_DIR").ok()?;
-    let entries = std::fs::read_dir(runtime_dir).ok()?;
-    for entry in entries {
-        if let Ok(entry) = entry {
-            let path = entry.path();
-            if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
-                if file_name.starts_with("niri.wayland-") && file_name.ends_with(".sock") {
-                    return Some(path);
-                }
-            }
-        }
+async fn prune_cache(cache: &mut HashMap<u64, Attention>) {
+    if let Some(active_ids) = focus::get_active_window_ids().await {
+        cache.retain(|id, _| active_ids.contains(id));
     }
-    None
-}
-
-async fn get_focused_window() -> Option<NiriWindow> {
-    let mut cmd = tokio::process::Command::new("niri");
-    cmd.args(&["msg", "--json", "focused-window"]);
-    if std::env::var("NIRI_SOCKET").is_err() {
-        if let Some(sock) = find_niri_socket() {
-            cmd.env("NIRI_SOCKET", sock);
-        }
-    }
-    let output = cmd.output().await.ok()?;
-
-    if !output.status.success() {
-        return None;
-    }
-
-    serde_json::from_slice(&output.stdout).ok()
-}
-
-fn prune_cache(cache: &mut HashMap<u32, Attention>) {
-    cache.retain(|pid, _| {
-        Path::new(&format!("/proc/{}", pid)).exists()
-    });
-}
-
-fn extract_pid_from_title(title: &str) -> Option<u32> {
-    if let Some(start_idx) = title.rfind("[PID: ") {
-        let remainder = &title[start_idx + 6..];
-        if let Some(end_idx) = remainder.find(']') {
-            let pid_str = &remainder[..end_idx];
-            return pid_str.trim().parse::<u32>().ok();
-        }
-    }
-    None
 }
 
 async fn handle_client(mut stream: UnixStream, cache: Cache) -> Result<(), Box<dyn std::error::Error>> {
@@ -122,39 +76,32 @@ async fn handle_client(mut stream: UnixStream, cache: Cache) -> Result<(), Box<d
     };
 
     match request {
-        Request::Publish { pid, attention } => {
-            let mut lock = cache.lock().await;
-            prune_cache(&mut lock);
-            lock.insert(pid, attention);
+        Request::Publish { attention, .. } => {
+            if let Some(focus) = focus::get_focus().await {
+                let mut lock = cache.lock().await;
+                prune_cache(&mut lock).await;
+                lock.insert(focus.window_id, attention);
+            }
             let response = serde_json::json!({ "status": "ok" });
             stream.write_all(response.to_string().as_bytes()).await?;
         }
         Request::Query => {
-            let window = get_focused_window().await;
+            let focus = focus::get_focus().await;
             let mut attention = None;
 
-            if let Some(ref win) = window {
-                let mut resolved_pid = win.pid;
-
-                // Try to extract PID from window title (resolves XWayland proxy PID mismatch)
-                if let Some(ref title) = win.title {
-                    if let Some(extracted_pid) = extract_pid_from_title(title) {
-                        resolved_pid = Some(extracted_pid);
-                    }
-                }
-
-                if let Some(pid) = resolved_pid {
-                    let mut lock = cache.lock().await;
-                    prune_cache(&mut lock);
-                    if let Some(att) = lock.get(&pid) {
-                        attention = Some(att.clone());
-                    }
+            if let Some(ref f) = focus {
+                let mut lock = cache.lock().await;
+                prune_cache(&mut lock).await;
+                if let Some(att) = lock.get(&f.window_id) {
+                    attention = Some(att.clone());
                 }
             }
 
             let context = Context {
-                app_id: window.as_ref().and_then(|w| w.app_id.clone()),
-                pid: window.as_ref().and_then(|w| w.pid),
+                app_id: focus.as_ref().and_then(|f| f.app_id.clone()),
+                title: focus.as_ref().and_then(|f| f.title.clone()),
+                pid: focus.as_ref().and_then(|f| f.pid),
+                window_id: focus.as_ref().map(|f| f.window_id),
                 attention,
             };
 

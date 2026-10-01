@@ -1,14 +1,10 @@
 use serde::Deserialize;
 use std::collections::HashSet;
 use std::path::PathBuf;
-use super::FocusPoint;
 
 #[derive(Debug, Deserialize)]
 struct NiriWindow {
     id: Option<u64>,
-    pid: Option<u32>,
-    app_id: Option<String>,
-    title: Option<String>,
 }
 
 fn find_niri_socket() -> Option<PathBuf> {
@@ -36,19 +32,13 @@ fn prepare_niri_cmd(subcmd: &str) -> tokio::process::Command {
     cmd
 }
 
-pub async fn get_focus() -> Option<FocusPoint> {
+pub async fn get_focus_window_id() -> Option<u64> {
     let output = prepare_niri_cmd("focused-window").output().await.ok()?;
     if !output.status.success() {
         return None;
     }
     let win: NiriWindow = serde_json::from_slice(&output.stdout).ok()?;
-    let window_id = win.id?;
-    Some(FocusPoint {
-        window_id,
-        pid: win.pid,
-        app_id: win.app_id,
-        title: win.title,
-    })
+    win.id
 }
 
 pub async fn get_active_window_ids() -> Option<HashSet<u64>> {

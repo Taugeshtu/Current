@@ -45,7 +45,7 @@ static void send_to_current(const char *path) {
         char *esc_path = json_escape(path);
         char payload[4096];
         int len = snprintf(payload, sizeof(payload),
-            "{\"type\":\"Publish\",\"attention\":{\"file\":%s,\"selections\":[]}}\n",
+            "{\"type\":\"Publish\",\"attention\":{\"folder\":%s}}\n",
             esc_path
         );
         g_free(esc_path);

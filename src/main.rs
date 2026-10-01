@@ -17,16 +17,20 @@ struct Selection {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-struct Attention {
-    file: String,
-    selections: Vec<Selection>,
+#[serde(untagged)]
+enum Attention {
+    File {
+        file: String,
+        #[serde(default)]
+        selections: Vec<Selection>,
+    },
+    Folder {
+        folder: String,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 struct Context {
-    app_id: Option<String>,
-    title: Option<String>,
-    pid: Option<u32>,
     window_id: Option<u64>,
     attention: Option<Attention>,
 }
@@ -77,31 +81,28 @@ async fn handle_client(mut stream: UnixStream, cache: Cache) -> Result<(), Box<d
 
     match request {
         Request::Publish { attention, .. } => {
-            if let Some(focus) = focus::get_focus().await {
+            if let Some(window_id) = focus::get_focus_window_id().await {
                 let mut lock = cache.lock().await;
                 prune_cache(&mut lock).await;
-                lock.insert(focus.window_id, attention);
+                lock.insert(window_id, attention);
             }
             let response = serde_json::json!({ "status": "ok" });
             stream.write_all(response.to_string().as_bytes()).await?;
         }
         Request::Query => {
-            let focus = focus::get_focus().await;
+            let window_id = focus::get_focus_window_id().await;
             let mut attention = None;
 
-            if let Some(ref f) = focus {
+            if let Some(id) = window_id {
                 let mut lock = cache.lock().await;
                 prune_cache(&mut lock).await;
-                if let Some(att) = lock.get(&f.window_id) {
+                if let Some(att) = lock.get(&id) {
                     attention = Some(att.clone());
                 }
             }
 
             let context = Context {
-                app_id: focus.as_ref().and_then(|f| f.app_id.clone()),
-                title: focus.as_ref().and_then(|f| f.title.clone()),
-                pid: focus.as_ref().and_then(|f| f.pid),
-                window_id: focus.as_ref().map(|f| f.window_id),
+                window_id,
                 attention,
             };
 
@@ -171,10 +172,17 @@ async fn run_client(command: &str) -> Result<(), Box<dyn std::error::Error>> {
     match command {
         "attention" => {
             if let Some(att) = context.attention {
-                if let Some(sel) = att.selections.first() {
-                    println!("{}:{}:{}", att.file, sel.line, sel.column);
-                } else {
-                    println!("{}", att.file);
+                match att {
+                    Attention::File { file, selections } => {
+                        if let Some(sel) = selections.first() {
+                            println!("{}:{}:{}", file, sel.line, sel.column);
+                        } else {
+                            println!("{}", file);
+                        }
+                    }
+                    Attention::Folder { folder } => {
+                        println!("{}", folder);
+                    }
                 }
                 return Ok(());
             }
@@ -182,26 +190,25 @@ async fn run_client(command: &str) -> Result<(), Box<dyn std::error::Error>> {
         }
         "location" => {
             if let Some(att) = context.attention {
-                let p = Path::new(&att.file);
-                let loc = if p.is_dir() {
-                    Some(p)
-                } else {
-                    p.parent()
+                let loc = match att {
+                    Attention::File { file, .. } => {
+                        Path::new(&file).parent().and_then(|p| p.to_str()).map(|s| s.to_string())
+                    }
+                    Attention::Folder { folder } => Some(folder),
                 };
-                if let Some(path_str) = loc.and_then(|p| p.to_str()) {
+                if let Some(path_str) = loc {
                     println!("{}", path_str);
                     return Ok(());
                 }
             }
             println!("{}", home_dir);
+            Ok(())
         }
         _ => {
             eprintln!("Unknown command: {}", command);
             std::process::exit(1);
         }
     }
-
-    Ok(())
 }
 
 #[tokio::main]

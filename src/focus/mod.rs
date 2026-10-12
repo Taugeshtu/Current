@@ -7,3 +7,7 @@ pub async fn get_focus_window_id() -> Option<u64> {
 pub async fn get_active_window_ids() -> Option<std::collections::HashSet<u64>> {
     niri::get_active_window_ids().await
 }
+
+pub async fn find_window_id_for_pid(pid: u32) -> Option<u64> {
+    niri::find_window_id_for_pid(pid).await
+}

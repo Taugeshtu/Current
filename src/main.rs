@@ -80,11 +80,13 @@ async fn handle_client(mut stream: UnixStream, cache: Cache) -> Result<(), Box<d
     };
 
     match request {
-        Request::Publish { attention, .. } => {
-            if let Some(window_id) = focus::get_focus_window_id().await {
-                let mut lock = cache.lock().await;
-                prune_cache(&mut lock).await;
-                lock.insert(window_id, attention);
+        Request::Publish { pid, attention } => {
+            if let Some(req_pid) = pid {
+                if let Some(window_id) = focus::find_window_id_for_pid(req_pid).await {
+                    let mut lock = cache.lock().await;
+                    prune_cache(&mut lock).await;
+                    lock.insert(window_id, attention);
+                }
             }
             let response = serde_json::json!({ "status": "ok" });
             stream.write_all(response.to_string().as_bytes()).await?;
